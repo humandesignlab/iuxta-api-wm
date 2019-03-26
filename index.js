@@ -1,35 +1,77 @@
-
-
+require('dotenv').config();
 const express = require('express');
-
-const scraper = require('./scraper');
+const cors = require("cors");
 const app = express();
 
-app.set('view engine', 'pug');
+const mongoose = require('mongoose');
+const List = require('./models/List');
+const bodyParser = require('body-parser');
 
-app.get('/api/wm-search/:searchTerm?', async (req, res) => {
+const search = require('./search');
+const storeSearchParams = require('./store-search-params');
 
-const getItems = (scraperProvider) => {
-	return new Promise((resolve, reject) => {
-	scraperProvider(req.query.searchTerm)
-		.then(data => {
-			resolve(data)
-		})
-		.catch(err => reject('Scrape failed'))
-});
-}
+mongoose.connect(process.env.MONGO_URI);
 
-const wmItems = await getItems(scraper.scrapeWm);
-const amItems =  await getItems(scraper.scrapeAmx);
-const sorItems = await getItems(scraper.scrapeSor);
-const chedItems = await getItems(scraper.scrapeSor);
-const samaItems = await getItems(scraper.scrapeSama);
+app.use(cors());
+app.use(bodyParser.json());
 
-await Promise.all([wmItems, amItems, sorItems, chedItems, samaItems])
-	.then(data => {
-		res.send({ data: { itemsWm: data[0], itemsAm: data[1], itemsSor: data[2], itemsChed: data[3], itemsSama: data[4] } })
-	})
-	.catch(err => res.status(500).send(err))
+app.get('/', (req, res) => {
+	res.send('iuxta-3 search api');
 });
 
-app.listen(process.env.PORT || 3030);
+app.get('/api/item-search/:searchTerm?', (req, res) => {
+  const wmArticles = [... storeSearchParams.map( (item, index) => {
+		return new Promise((resolve, reject) => {
+			search
+				.search(req.query.searchTerm, item)
+				.then(data => {
+					data.map(store => {
+						store.name = item.name; 
+						return data
+					});
+					resolve(data);
+				})
+				.catch(err => reject(`${item.name} scrape failed: ${err}`))
+		});
+	})];
+
+  Promise.all(wmArticles)
+    .then(data => {
+      res.send(data[0].concat(data[1], data[2], data[3], data[4]));
+    })
+    .catch(err => res.status(500).send(err));
+});
+
+app.post('/api/post-list', (req, res) => {
+  var newList = new List(req.body);
+  newList.save((err, doc) => {
+    if (err) {
+      res.send(err);
+    } else {
+      res.send(doc);
+    }
+  });
+});
+
+app.get('/api/get-list:usrId?', (req, res) => {
+	List.find({ userId: req.query.usrId}, (err, doc) => {
+		if (err) {
+      res.send(err);
+    } else {
+      res.send(doc);
+    }
+	});
+});
+
+app.post('/api/update-list', (req, res) => {
+	List.findOneAndReplace({ _id: req.query.listId}, {$set: {listArray: req.body[0], date: req.query.timeStamp}}, (err, doc) => {
+		if (err) {
+      res.send(err);
+    } else {
+      res.send(doc);
+    }
+	});
+});
+
+const port = process.env.PORT || 3030;
+app.listen(port, () => console.log("Listening on ", port));
